@@ -1,0 +1,156 @@
+services:
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    container_name: user-service
+    environment:
+      - REDIS_URL=redis://keydb:6379/
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/apidemo-db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2f
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keydb:
+        condition: service_started
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: notification-service
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/%2f
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:13.3
+    container_name: postgres-archapp
+    environment:
+      POSTGRES_DB: "apidemo-db"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d apidemo-db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  balance-service:
+    build:
+      context: .
+      dockerfile: balance-service/Dockerfile
+    container_name: balance-service
+    environment:
+      - DATABASE_URL=postgres://postgres:postgres@balance-db:5432/balance-db
+    ports:
+      - "8081:8080"
+    restart: unless-stopped
+    depends_on:
+      balance-db:
+        condition: service_healthy
+
+  balance-db:
+    image: postgres:13.3
+    container_name: balance-db
+    environment:
+      POSTGRES_DB: "balance-db"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./balance-db-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d balance-db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  keydb:
+    image: "eqalpha/keydb:x86_64_v5.3.3"
+    container_name: keydb-archapp
+    command: "keydb-server /etc/keydb/redis.conf --server-threads 2"
+    volumes:
+      - "data:/data"
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    container_name: rabbitmq-archapp
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "15692:15692"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbitmq_prometheus true"
+    volumes:
+      - ./rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_listener", "5672"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  prometheus:
+    image: prom/prometheus:v2.44.0
+    container_name: prometheus-archapp
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana-archapp
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.24.0
+    container_name: alertmanager-archapp
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+  mailpit:
+    image: axllent/mailpit
+    container_name: mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    restart: unless-stopped
+
+volumes:
+  data:
+    driver: local
+  grafana-data:

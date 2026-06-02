@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "shared-contract",
+    "user-service",
+    "notification-service",
+    "balance-service"
+]
+resolver = "2"
